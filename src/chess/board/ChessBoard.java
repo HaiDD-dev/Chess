@@ -74,7 +74,7 @@ public class ChessBoard extends JPanel {
     /**
      * Initializes the board with all pieces in their starting positions.
      */
-    private void initializeBoard() {
+    public void initializeBoard() {
         pieces = new ChessPiece[BOARD_SIZE][BOARD_SIZE];
 
         // Initialize pawns
@@ -856,16 +856,23 @@ public class ChessBoard extends JPanel {
         moveHistory.add(move);
         game.addMoveToHistory(move);
 
-        // Check for check, checkmate, or stalemate
+        // Check for game-ending conditions
         boolean isOpponentInCheck = isInCheck(!movingPiece.isWhite, pieces);
+
         if (isCheckmate(!movingPiece.isWhite)) {
-            JOptionPane.showMessageDialog(null,
-                    "Checkmate! " + (movingPiece.isWhite ? "White" : "Black") + " wins!");
+            // Call onGameWon before showing dialog
+            game.onGameWon(movingPiece.isWhite);
+        } else if (isStalemate(!movingPiece.isWhite)) {
+            // For stalemate, we could either:
+            // 1. Count it as a draw and restart the game
+            // 2. Give the win to the player who didn't cause the stalemate
+            // Here we're implementing option 1
+            JOptionPane.showMessageDialog(null, "Stalemate! The game is a draw!");
+            game.restartGame(); // Restart the game but keep the match score
         } else if (isOpponentInCheck) {
+            // Just notify about check
             JOptionPane.showMessageDialog(null,
                     (movingPiece.isWhite ? "Black" : "White") + " is in check!");
-        } else if (isStalemate(!movingPiece.isWhite)) {
-            JOptionPane.showMessageDialog(null, "Stalemate! The game is a draw!");
         }
     }
 
@@ -880,54 +887,74 @@ public class ChessBoard extends JPanel {
             return;
         }
 
-        // Find the king's position for checking pins
-        Position kingPos = null;
-        for (int r = 0; r < BOARD_SIZE; r++) {
-            for (int c = 0; c < BOARD_SIZE; c++) {
-                if (pieces[r][c] != null && pieces[r][c].type == PieceType.KING && pieces[r][c].isWhite == piece.isWhite) {
-                    kingPos = new Position(r, c);
-                    break;
-                }
-            }
-            if (kingPos != null) {
-                break;
-            }
-        }
+        // First, find all theoretical moves based on piece type
+        Set<Position> theoreticalMoves = new HashSet<>();
 
-        // Determine if the piece is pinned and in which direction
-        int[] pinDirection = getPinDirection(row, col, kingPos);
-        boolean isPinned = pinDirection != null;
-
-        // Calculate possible moves based on piece type
         switch (piece.type) {
             case PAWN:
-                calculatePawnMoves(row, col, piece.isWhite, isPinned, pinDirection);
+                addPawnTheoriticalMoves(row, col, piece.isWhite, theoreticalMoves);
                 break;
             case KNIGHT:
-                if (!isPinned) {
-                    calculateKnightMoves(row, col, piece.isWhite);
-                }
+                addKnightTheoriticalMoves(row, col, piece.isWhite, theoreticalMoves);
                 break;
             case BISHOP:
-                calculateBishopMoves(row, col, piece.isWhite, isPinned, pinDirection);
+                addBishopTheoriticalMoves(row, col, piece.isWhite, theoreticalMoves);
                 break;
             case ROOK:
-                calculateRookMoves(row, col, piece.isWhite, isPinned, pinDirection);
+                addRookTheoriticalMoves(row, col, piece.isWhite, theoreticalMoves);
                 break;
             case QUEEN:
-                calculateQueenMoves(row, col, piece.isWhite, isPinned, pinDirection);
+                addBishopTheoriticalMoves(row, col, piece.isWhite, theoreticalMoves);
+                addRookTheoriticalMoves(row, col, piece.isWhite, theoreticalMoves);
                 break;
             case KING:
-                calculateKingMoves(row, col, piece.isWhite);
+                addKingTheoriticalMoves(row, col, piece.isWhite, theoreticalMoves);
                 break;
+        }
+
+        // Then filter moves that would leave/put the king in check
+        for (Position move : theoreticalMoves) {
+            if (isValidMove(row, col, move.row, move.col)) {
+                possibleMoves.add(move);
+            }
         }
     }
 
-    /**
-     * Calculates all valid moves for a knight. The knight moves in an L-shape
-     * pattern.
-     */
-    private void calculateKnightMoves(int row, int col, boolean isWhite) {
+    private void addPawnTheoriticalMoves(int row, int col, boolean isWhite, Set<Position> moves) {
+        int direction = isWhite ? -1 : 1;
+
+        // Forward move
+        if (isWithinBounds(row + direction, col) && pieces[row + direction][col] == null) {
+            moves.add(new Position(row + direction, col));
+
+            // Initial two-square move
+            if ((isWhite && row == 6) || (!isWhite && row == 1)) {
+                if (pieces[row + 2 * direction][col] == null) {
+                    moves.add(new Position(row + 2 * direction, col));
+                }
+            }
+        }
+
+        // Captures
+        for (int deltaCol : new int[]{-1, 1}) {
+            int newRow = row + direction;
+            int newCol = col + deltaCol;
+
+            if (isWithinBounds(newRow, newCol)) {
+                // Normal capture
+                if (pieces[newRow][newCol] != null && pieces[newRow][newCol].isWhite != isWhite) {
+                    moves.add(new Position(newRow, newCol));
+                }
+
+                // En passant
+                if (canEnPassant(row, col, newRow, newCol, isWhite)) {
+                    moves.add(new Position(newRow, newCol));
+                }
+            }
+        }
+    }
+
+    private void addKnightTheoriticalMoves(int row, int col, boolean isWhite, Set<Position> moves) {
         int[][] knightMoves = {
             {-2, -1}, {-2, 1}, {-1, -2}, {-1, 2},
             {1, -2}, {1, 2}, {2, -1}, {2, 1}
@@ -937,36 +964,27 @@ public class ChessBoard extends JPanel {
             int newRow = row + move[0];
             int newCol = col + move[1];
 
-            if (newRow >= 0 && newRow < BOARD_SIZE && newCol >= 0 && newCol < BOARD_SIZE) {
+            if (isWithinBounds(newRow, newCol)) {
                 if (pieces[newRow][newCol] == null || pieces[newRow][newCol].isWhite != isWhite) {
-                    addValidMove(row, col, newRow, newCol);
+                    moves.add(new Position(newRow, newCol));
                 }
             }
         }
     }
 
-    /**
-     * Calculates all valid moves for a bishop. The bishop moves diagonally in
-     * any direction.
-     */
-    private void calculateBishopMoves(int row, int col, boolean isWhite, boolean isPinned, int[] pinDirection) {
+    private void addBishopTheoriticalMoves(int row, int col, boolean isWhite, Set<Position> moves) {
         int[][] directions = {{-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
 
         for (int[] dir : directions) {
-            if (isPinned && (pinDirection[0] != dir[0] || pinDirection[1] != dir[1])
-                    && (pinDirection[0] != -dir[0] || pinDirection[1] != -dir[1])) {
-                continue;
-            }
-
             int currentRow = row + dir[0];
             int currentCol = col + dir[1];
 
-            while (currentRow >= 0 && currentRow < BOARD_SIZE && currentCol >= 0 && currentCol < BOARD_SIZE) {
+            while (isWithinBounds(currentRow, currentCol)) {
                 if (pieces[currentRow][currentCol] == null) {
-                    addValidMove(row, col, currentRow, currentCol);
+                    moves.add(new Position(currentRow, currentCol));
                 } else {
                     if (pieces[currentRow][currentCol].isWhite != isWhite) {
-                        addValidMove(row, col, currentRow, currentCol);
+                        moves.add(new Position(currentRow, currentCol));
                     }
                     break;
                 }
@@ -976,41 +994,21 @@ public class ChessBoard extends JPanel {
         }
     }
 
-    /**
-     * Calculates all possible moves for a rook. The rook moves horizontally and
-     * vertically.
-     *
-     * @param row The row position of the rook
-     * @param col The column position of the rook
-     * @param isWhite True if the piece is white, false otherwise
-     * @param isPinned True if the piece is pinned and restricted in movement
-     * @param pinDirection The direction in which the piece is pinned
-     */
-    private void calculateRookMoves(int row, int col, boolean isWhite, boolean isPinned, int[] pinDirection) {
-        // Rook moves in four directions: up, down, left, right
+    private void addRookTheoriticalMoves(int row, int col, boolean isWhite, Set<Position> moves) {
         int[][] directions = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
 
         for (int[] dir : directions) {
-            // If pinned, the rook can only move along the pin direction
-            if (isPinned && (pinDirection[0] != dir[0] || pinDirection[1] != dir[1])
-                    && (pinDirection[0] != -dir[0] || pinDirection[1] != -dir[1])) {
-                continue;
-            }
-
             int currentRow = row + dir[0];
             int currentCol = col + dir[1];
 
-            // Move in the chosen direction until hitting another piece or the board edge
-            while (currentRow >= 0 && currentRow < BOARD_SIZE
-                    && currentCol >= 0 && currentCol < BOARD_SIZE) {
+            while (isWithinBounds(currentRow, currentCol)) {
                 if (pieces[currentRow][currentCol] == null) {
-                    addValidMove(row, col, currentRow, currentCol);
+                    moves.add(new Position(currentRow, currentCol));
                 } else {
-                    // If the piece is an opponent's, it can be captured
                     if (pieces[currentRow][currentCol].isWhite != isWhite) {
-                        addValidMove(row, col, currentRow, currentCol);
+                        moves.add(new Position(currentRow, currentCol));
                     }
-                    break; // Stop moving in this direction after encountering any piece
+                    break;
                 }
                 currentRow += dir[0];
                 currentCol += dir[1];
@@ -1018,62 +1016,55 @@ public class ChessBoard extends JPanel {
         }
     }
 
-    /**
-     * Calculates all possible moves for a queen. The queen moves like both a
-     * rook and a bishop.
-     *
-     * @param row The row position of the queen
-     * @param col The column position of the queen
-     * @param isWhite True if the piece is white, false otherwise
-     * @param isPinned True if the piece is pinned and restricted in movement
-     * @param pinDirection The direction in which the piece is pinned
-     */
-    private void calculateQueenMoves(int row, int col, boolean isWhite, boolean isPinned, int[] pinDirection) {
-        // The queen's movement is a combination of rook and bishop moves
-        calculateRookMoves(row, col, isWhite, isPinned, pinDirection);
-        calculateBishopMoves(row, col, isWhite, isPinned, pinDirection);
-    }
-
-    /**
-     * Calculates all possible moves for a king. The king moves one square in
-     * any direction.
-     *
-     * @param row The row position of the king
-     * @param col The column position of the king
-     * @param isWhite True if the piece is white, false otherwise
-     */
-    private void calculateKingMoves(int row, int col, boolean isWhite) {
-        // The king moves one square in all eight possible directions
+    private void addKingTheoriticalMoves(int row, int col, boolean isWhite, Set<Position> moves) {
         int[][] directions = {
             {-1, -1}, {-1, 0}, {-1, 1},
             {0, -1}, {0, 1},
             {1, -1}, {1, 0}, {1, 1}
         };
 
+        // Normal moves
         for (int[] dir : directions) {
             int newRow = row + dir[0];
             int newCol = col + dir[1];
 
-            // Ensure the move is within board limits
-            if (newRow >= 0 && newRow < BOARD_SIZE && newCol >= 0 && newCol < BOARD_SIZE) {
-                // The king can move if the square is empty or occupied by an opponent
+            if (isWithinBounds(newRow, newCol)) {
                 if (pieces[newRow][newCol] == null || pieces[newRow][newCol].isWhite != isWhite) {
-                    addValidMove(row, col, newRow, newCol);
+                    moves.add(new Position(newRow, newCol));
                 }
             }
         }
 
         // Castling moves
         if (!piecesWithFirstMove.contains(pieces[row][col])) {
-            // Kingside castling
+            // Check kingside castling
             if (canCastle(row, col, true, isWhite)) {
-                addValidMove(row, col, row, col + 2);
+                moves.add(new Position(row, col + 2));
             }
-            // Queenside castling
+            // Check queenside castling
             if (canCastle(row, col, false, isWhite)) {
-                addValidMove(row, col, row, col - 2);
+                moves.add(new Position(row, col - 2));
             }
         }
+    }
+
+    private boolean isWithinBounds(int row, int col) {
+        return row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE;
+    }
+
+    private boolean canEnPassant(int fromRow, int fromCol, int toRow, int toCol, boolean isWhite) {
+        if (moveHistory.isEmpty()) {
+            return false;
+        }
+
+        Move lastMove = moveHistory.get(moveHistory.size() - 1);
+        return pieces[fromRow][toCol] != null
+                && pieces[fromRow][toCol].type == PieceType.PAWN
+                && pieces[fromRow][toCol].isWhite != isWhite
+                && lastMove.piece == pieces[fromRow][toCol]
+                && Math.abs(lastMove.fromRow - lastMove.toRow) == 2
+                && lastMove.toCol == toCol
+                && ((isWhite && fromRow == 3) || (!isWhite && fromRow == 4));
     }
 
     /**
@@ -1112,161 +1103,6 @@ public class ChessBoard extends JPanel {
         }
 
         return true;
-    }
-
-    /**
-     * Determines the pin direction for a piece relative to its king. If the
-     * piece is pinned, it can only move in a specific direction.
-     *
-     * @param pieceRow The row position of the piece
-     * @param pieceCol The column position of the piece
-     * @param kingPos The position of the king
-     * @return The pin direction as an array [rowDirection, colDirection], or
-     * null if not pinned
-     */
-    private int[] getPinDirection(int pieceRow, int pieceCol, Position kingPos) {
-        if (kingPos == null || pieces[pieceRow][pieceCol].type == PieceType.KING) {
-            return null; // The king itself cannot be pinned
-        }
-
-        int rowDiff = kingPos.row - pieceRow;
-        int colDiff = kingPos.col - pieceCol;
-
-        // Check if the piece is on the same row, column, or diagonal as the king
-        if (rowDiff == 0 || colDiff == 0 || Math.abs(rowDiff) == Math.abs(colDiff)) {
-            int rowDir = Integer.compare(rowDiff, 0);
-            int colDir = Integer.compare(colDiff, 0);
-
-            // Look for an attacking piece beyond the potential pinned piece
-            int currentRow = pieceRow + rowDir;
-            int currentCol = pieceCol + colDir;
-            boolean foundOurPiece = false;
-
-            while (currentRow >= 0 && currentRow < BOARD_SIZE
-                    && currentCol >= 0 && currentCol < BOARD_SIZE) {
-
-                if (currentRow == kingPos.row && currentCol == kingPos.col) {
-                    // If an attacking piece was found earlier, this piece is pinned
-                    if (foundOurPiece) {
-                        return new int[]{rowDir, colDir};
-                    }
-                    break;
-                }
-
-                ChessPiece currentPiece = pieces[currentRow][currentCol];
-                if (currentPiece != null) {
-                    if (currentPiece.isWhite == pieces[pieceRow][pieceCol].isWhite) {
-                        if (!foundOurPiece) {
-                            foundOurPiece = true; // First friendly piece found
-                        } else {
-                            break; // Multiple pieces block the pin, so no pin
-                        }
-                    } else {
-                        // Check if the enemy piece is capable of pinning
-                        boolean isPinningPiece = false;
-                        if (rowDiff == 0 || colDiff == 0) {
-                            isPinningPiece = (currentPiece.type == PieceType.ROOK
-                                    || currentPiece.type == PieceType.QUEEN);
-                        } else {
-                            isPinningPiece = (currentPiece.type == PieceType.BISHOP
-                                    || currentPiece.type == PieceType.QUEEN);
-                        }
-                        if (isPinningPiece && foundOurPiece) {
-                            return new int[]{rowDir, colDir}; // Piece is pinned
-                        }
-                        break;
-                    }
-                }
-                currentRow += rowDir;
-                currentCol += colDir;
-            }
-        }
-        return null; // No pin detected
-    }
-
-    /**
-     * Calculates all possible moves for a pawn. Pawns move forward, capture
-     * diagonally, and have special moves like en passant.
-     *
-     * @param row The row position of the pawn
-     * @param col The column position of the pawn
-     * @param isWhite True if the pawn is white, false otherwise
-     * @param isPinned True if the pawn is pinned
-     * @param pinDirection The allowed movement direction if pinned
-     */
-    private void calculatePawnMoves(int row, int col, boolean isWhite, boolean isPinned, int[] pinDirection) {
-        int direction = isWhite ? -1 : 1; // White moves up (-1), black moves down (+1)
-
-        // Forward moves (only allowed if not pinned or pinned along the same column)
-        if (!isPinned || (pinDirection != null && pinDirection[1] == 0)) {
-            // One square forward
-            if (row + direction >= 0 && row + direction < BOARD_SIZE
-                    && pieces[row + direction][col] == null) {
-                addValidMove(row, col, row + direction, col);
-
-                // Two squares forward from starting position
-                if ((isWhite && row == 6) || (!isWhite && row == 1)) {
-                    if (pieces[row + 2 * direction][col] == null) {
-                        addValidMove(row, col, row + 2 * direction, col);
-                    }
-                }
-            }
-        }
-
-        // Capturing moves (diagonal moves)
-        for (int deltaCol : new int[]{-1, 1}) {
-            if (!isPinned || (pinDirection != null
-                    && pinDirection[0] == direction && pinDirection[1] == deltaCol)) {
-
-                int newRow = row + direction;
-                int newCol = col + deltaCol;
-
-                if (newRow >= 0 && newRow < BOARD_SIZE
-                        && newCol >= 0 && newCol < BOARD_SIZE) {
-
-                    // Normal capture (diagonal attack)
-                    if (pieces[newRow][newCol] != null
-                            && pieces[newRow][newCol].isWhite != isWhite) {
-                        addValidMove(row, col, newRow, newCol);
-                    }
-
-                    // En passant move (special capture)
-                    if (pieces[newRow][newCol] == null && pieces[row][newCol] != null
-                            && pieces[row][newCol].type == PieceType.PAWN
-                            && pieces[row][newCol].isWhite != isWhite
-                            && !moveHistory.isEmpty()) {
-
-                        Move lastMove = moveHistory.get(moveHistory.size() - 1);
-                        if (lastMove.piece == pieces[row][newCol]
-                                && Math.abs(lastMove.fromRow - lastMove.toRow) == 2
-                                && lastMove.toCol == newCol) {
-                            addValidMove(row, col, newRow, newCol); // En passant capture
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Adds a valid move if it does not put the king in check.
-     *
-     * @param fromRow The starting row
-     * @param fromCol The starting column
-     * @param toRow The destination row
-     * @param toCol The destination column
-     */
-    private void addValidMove(int fromRow, int fromCol, int toRow, int toCol) {
-        // Create a temporary board state to check the move's safety
-        ChessPiece[][] tempBoard = copyBoard();
-        ChessPiece movingPiece = tempBoard[fromRow][fromCol];
-        tempBoard[toRow][toCol] = movingPiece;
-        tempBoard[fromRow][fromCol] = null;
-
-        // Ensure the move does not put the player's own king in check
-        if (!isInCheck(movingPiece.isWhite, tempBoard)) {
-            possibleMoves.add(new Position(toRow, toCol));
-        }
     }
 
     /**
@@ -1337,4 +1173,6 @@ public class ChessBoard extends JPanel {
         }
     }
 }
-// lỗi hai con mã ở cột J không hiện nước đi có thể đi
+
+// thêm tính năng lưu những trận đã đấu
+// thêm tính năng undo tối đa 3 lần
