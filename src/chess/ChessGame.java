@@ -53,7 +53,7 @@ public class ChessGame extends JFrame implements ChessTimer.TimerListener {
 
         // Score panel
         JPanel scorePanel = new JPanel();
-        scoreLabel = new JLabel("Score - White: 0.0 Black: 0.0");
+        scoreLabel = new JLabel("<html>-- Score --<br>White: 0.0<br>Black: 0.0</html>");
         scoreLabel.setFont(new Font("Monospaced", Font.BOLD, 20));
         scorePanel.add(scoreLabel);
         rightPanel.add(scorePanel);
@@ -141,7 +141,7 @@ public class ChessGame extends JFrame implements ChessTimer.TimerListener {
     }
 
     private void updateScoreLabel() {
-        scoreLabel.setText(String.format("Score - White: %.1f Black: %.1f", whiteWins, blackWins));
+        scoreLabel.setText(String.format("<html>-- Score --<br>White: %.1f<br>Black: %.1f</html>", whiteWins, blackWins));
     }
 
     public void onGameWon(boolean whiteWinner) {
