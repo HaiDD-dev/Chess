@@ -1176,3 +1176,5 @@ public class ChessBoard extends JPanel {
 
 // thêm tính năng lưu những trận đã đấu
 // thêm tính năng undo tối đa 3 lần
+// thêm tiếng ăn cờ, đi cờ
+// thêm đã ăn con gì cộng điểm lợi thế
